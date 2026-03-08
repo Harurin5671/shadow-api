@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Shadow API</title>
+    <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+</head>
+<body>
+    <h1>Test Shadow API</h1>
+    <button onclick="connect()">Conectar</button>
+    <button onclick="getMyRooms()">Obtener Mis Rooms</button>
+    <button onclick="createRoom()">Crear Room</button>
+    <div id="logs"></div>
+
+    <script>
+        let socket;
+
+        function log(message) {
+            const logs = document.getElementById('logs');
+            logs.innerHTML += '<pre>' + new Date().toLocaleTimeString() + ' - ' + JSON.stringify(message, null, 2) + '</pre>';
+        }
+
+        function connect() {
+            socket = io('http://localhost:3000');
+            
+            socket.on('connect', () => {
+                log('Conectado: ' + socket.id);
+            });
+
+            socket.on('room:myRooms', (data) => {
+                log('RESPUESTA room:myRooms:');
+                log(data);
+            });
+
+            socket.on('room:created', (data) => {
+                log('Room creada:');
+                log(data);
+            });
+
+            socket.on('error', (error) => {
+                log('Error:');
+                log(error);
+            });
+        }
+
+        function getMyRooms() {
+            if (!socket) {
+                alert('Primero conecta');
+                return;
+            }
+            log('ENVIANDO room:getMyRooms');
+            socket.emit('room:getMyRooms');
+        }
+
+        function createRoom() {
+            if (!socket) {
+                alert('Primero conecta');
+                return;
+            }
+            log('ENVIANDO room:create');
+            socket.emit('room:create', {
+                alias: 'Tester',
+                maxParticipants: 5
+            });
+        }
+    </script>
+</body>
+</html>
