@@ -22,7 +22,7 @@ Shadow API es un backend de chat seguro construido con NestJS que implementa cif
 
 ### Prerrequisitos
 
-- Node.js 18+ 
+- Node.js 18+
 - pnpm (recomendado) / npm
 - Redis Server
 - macOS (para las instrucciones específicas)
@@ -52,6 +52,7 @@ cp .env.example .env
 ```
 
 Variables disponibles:
+
 ```
 PORT=3000                    # Puerto del servidor
 REDIS_HOST=localhost         # Host de Redis
@@ -96,17 +97,20 @@ brew services stop redis
 ## 🔄 Actualizaciones Recientes
 
 ### ✨ Gestión de TTL (Último)
+
 - **Duración Fija de Salas**: Las salas ahora duran exactamente 1 hora desde creación
 - **TTL No Reiniciable**: Las uniones/salidas de usuarios ya no extienden la duración
 - **Preservación de TTL**: Método `savePreservingTTL()` mantiene el tiempo restante
 - **Tiempo Exacto**: `expiresInSeconds` muestra el tiempo restante correcto
 
 ### 👤 Identificación de Creador
+
 - **Info del Creador**: `room:joined` y `room:getMyRooms` incluyen detalles del creador
 - **Socket ID del Creador**: Siempre sabes a quién solicitar la room key
 - **Detección de Rol**: Distinguir entre rol de creador y participante
 
 ### 🔐 Mejoras de Seguridad
+
 - **Zero-Knowledge**: Servidor nunca almacena room keys ni claves privadas
 - **Intercambio ECDH**: Compartición segura de claves peer-to-peer
 - **Payloads Cifrados**: Todo el contenido de mensajes se cifra del lado del cliente
@@ -122,24 +126,29 @@ brew services stop redis
 ### Módulos Principales
 
 #### 1. Room Module (`src/modules/room/`)
+
 Gestiona la creación, unión y destrucción de salas de chat.
 
 **Componentes:**
+
 - `domain/`: Entidades de dominio y repositorios
 - `application/`: Casos de uso (CreateRoom, JoinRoom, DestroyRoom)
 - `infrastructure/`: Implementación del repositorio con Redis
 - `presentation/`: Gateway de WebSocket para eventos de sala
 
 #### 2. Message Module (`src/modules/message/`)
+
 Maneja el relay de mensajes cifrados y el intercambio de claves.
 
 **Característica de Seguridad:**
 El servidor NUNCA puede descifrar los mensajes. Solo retransmite bytes cifrados.
 
 #### 3. Security Module (`src/modules/security/`)
+
 Proporciona utilidades criptográficas y validaciones.
 
 #### 4. Core Infrastructure (`src/core/`)
+
 Configuración compartida, manejo de errores y conexión a Redis.
 
 ## Eventos de WebSocket Disponibles
@@ -147,18 +156,21 @@ Configuración compartida, manejo de errores y conexión a Redis.
 ### Eventos de Sala
 
 #### 1. Crear Sala
+
 **Cliente → Servidor:**
+
 ```typescript
 socket.emit('room:create', {
-  alias: "MiAlias",
-  password: "opcional",           // Opcional
-  maxParticipants: 10,            // Opcional, 2-20
-  deadManSwitchInterval: 300000,  // Opcional, ms
-  defaultBurnAfter: 60000         // Opcional, segundos
+  alias: 'MiAlias',
+  password: 'opcional', // Opcional
+  maxParticipants: 10, // Opcional, 2-20
+  deadManSwitchInterval: 300000, // Opcional, ms
+  defaultBurnAfter: 60000, // Opcional, segundos
 });
 ```
 
 **Servidor → Cliente:**
+
 ```typescript
 // Éxito
 socket.on('room:created', (data) => {
@@ -167,8 +179,9 @@ socket.on('room:created', (data) => {
   //   code: "ABC123",
   //   socketId: "socket_id",
   //   participantCount: 1,
-  //   settings: { maxParticipants: 10, password: "..." },
-  //   createdAt: "2024-01-01T00:00:00.000Z"
+  //   settings: { maxParticipants: 10, password: "...", ... },
+  //   createdAt: "2024-01-01T00:00:00.000Z",
+  //   expiresInSeconds: 3600        // ← NUEVO: Tiempo total inicial
   // }
 });
 
@@ -179,17 +192,21 @@ socket.on('error', (error) => {
 ```
 
 #### 2. Unirse a Sala
+
 **Cliente → Servidor:**
+
 ```typescript
 socket.emit('room:join', {
-  roomCode: "ABC123",
-  alias: "MiAlias",
-  isGhost: false,              // true para modo fantasma
-  password: "opcional"         // Solo si la sala tiene contraseña
+  roomCode: 'ABC123',
+  alias: 'MiAlias',
+  isGhost: false, // true para modo fantasma
+  password: 'opcional', // Solo si la sala tiene contraseña
+  publicKey: 'opcional', // Clave pública P256 opcional
 });
 ```
 
 **Servidor → Cliente:**
+
 ```typescript
 // Confirmación para quien se une
 socket.on('room:joined', (data) => {
@@ -198,29 +215,39 @@ socket.on('room:joined', (data) => {
   //   socketId: "socket_id",
   //   participantCount: 2,
   //   settings: { maxParticipants: 10, ... },
-  //   creator: {                    // ← NUEVO: Información del creador
+  //   creator: {                    // ← Información del creador
   //     socketId: "creator_socket_id",
-  //     alias: "NombreDelCreador"
+  //     alias: "NombreDelCreador",
+  //     publicKey: "clave_publica_base64" // ← NUEVO
   //   }
   // }
 });
 
 // Notificación a otros participantes (si no es fantasma)
 socket.on('participant:joined', (data) => {
-  // { alias: "MiAlias", participantCount: 2 }
+  // {
+  //   alias: "MiAlias",
+  //   socketId: "socket_id",
+  //   publicKey: "base64...",
+  //   participantCount: 2,
+  //   roomCode: "ABC123"
+  // }
 });
 ```
 
 #### 3. Destruir Sala
+
 **Cliente → Servidor:**
+
 ```typescript
 socket.emit('room:destroy', {
-  roomCode: "ABC123",
-  reason: "creatorLeft" | "manual" | "deadManSwitch"
+  roomCode: 'ABC123',
+  reason: 'creatorLeft' | 'manual' | 'deadManSwitch',
 });
 ```
 
 **Servidor → Todos:**
+
 ```typescript
 socket.on('room:destroyed', (data) => {
   // {
@@ -231,7 +258,9 @@ socket.on('room:destroyed', (data) => {
 ```
 
 #### 4. Participante se va
+
 **Servidor → Resto de participantes:**
+
 ```typescript
 socket.on('participant:left', (data) => {
   // { alias: "MiAlias", participantCount: 1 }
@@ -239,12 +268,15 @@ socket.on('participant:left', (data) => {
 ```
 
 #### 5. Obtener Mis Salas
+
 **Cliente → Servidor:**
+
 ```typescript
 socket.emit('room:getMyRooms');
 ```
 
 **Servidor → Cliente:**
+
 ```typescript
 socket.on('room:myRooms', (data) => {
   console.log(data);
@@ -269,15 +301,43 @@ socket.on('room:myRooms', (data) => {
 });
 ```
 
-#### 6. Obtener Historial de Mensajes (NUEVO)
+#### 6. Verificar Sala (NUEVO)
+
 **Cliente → Servidor:**
+
 ```typescript
-socket.emit('room:getMessages', {
-  roomCode: "ABC123"
+socket.emit('room:verify', {
+  roomCode: 'ABC123',
 });
 ```
 
 **Servidor → Cliente:**
+
+```typescript
+socket.on('room:verified', (data) => {
+  // {
+  //   exists: true,
+  //   isValid: true,
+  //   participantCount: 2,
+  //   creator: { socketId: "...", alias: "..." },
+  //   expiresInSeconds: 3500,
+  //   settings: { ... }
+  // }
+});
+```
+
+#### 7. Obtener Historial de Mensajes
+
+**Cliente → Servidor:**
+
+```typescript
+socket.emit('room:getMessages', {
+  roomCode: 'ABC123',
+});
+```
+
+**Servidor → Cliente:**
+
 ```typescript
 socket.on('room:messages', (data) => {
   console.log(data);
@@ -300,17 +360,20 @@ socket.on('room:messages', (data) => {
 ### Eventos de Mensajes
 
 #### 1. Enviar Mensaje Cifrado
+
 **Cliente → Servidor:**
+
 ```typescript
 socket.emit('message:send', {
-  roomCode: "ABC123",
-  encryptedPayload: "mensaje_cifrado_en_base64",
-  senderAlias: "MiAlias",
-  burnAfter: 300  // opcional - segundos para auto-destruir
+  roomCode: 'ABC123',
+  encryptedPayload: 'mensaje_cifrado_en_base64',
+  senderAlias: 'MiAlias',
+  burnAfter: 300, // opcional - segundos para auto-destruir
 });
 ```
 
 **Servidor → Destinatarios:**
+
 ```typescript
 socket.on('message:receive', (data) => {
   // {
@@ -329,26 +392,29 @@ socket.on('message:sent', (data) => {
 ```
 
 #### 2. Intercambio de Claves ECDH (Sala Dinámica)
+
 **Cliente → Servidor:**
+
 ```typescript
 // Broadcast de clave pública a toda la sala
 socket.emit('key:exchange', {
-  roomCode: "ABC123",
-  publicKey: "clave_pública_P256_en_base64",
-  participantAlias: "MiAlias"
+  roomCode: 'ABC123',
+  publicKey: 'clave_pública_P256_en_base64',
+  participantAlias: 'MiAlias',
   // NOTA: No hay targetSocketId - es broadcast a sala completa
 });
 
 // Opcional: Enviar a participante específico
 socket.emit('key:exchange', {
-  roomCode: "ABC123",
-  targetSocketId: "socket_id_específico",
-  publicKey: "clave_pública_P256_en_base64",
-  participantAlias: "MiAlias"
+  roomCode: 'ABC123',
+  targetSocketId: 'socket_id_específico',
+  publicKey: 'clave_pública_P256_en_base64',
+  participantAlias: 'MiAlias',
 });
 ```
 
 **Servidor → Todos en sala:**
+
 ```typescript
 socket.on('key:receive', (data) => {
   // {
@@ -360,6 +426,53 @@ socket.on('key:receive', (data) => {
 });
 ```
 
+### Eventos de Seguridad y Control
+
+#### 1. Alerta de Seguridad
+
+**Cliente → Servidor:**
+
+```typescript
+socket.emit('security:alert', {
+  roomCode: 'ABC123',
+  threatType:
+    'screenshot' | 'screenRecording' | 'clipboardCopy' | 'exportAttempt',
+  reporterAlias: 'MiAlias',
+});
+```
+
+**Servidor → Todos:**
+
+```typescript
+socket.on('security:alert', (data) => {
+  // {
+  //   threatType: "screenshot",
+  //   reporterAlias: "MiAlias",
+  //   detectedAt: "2024-01-01T00:00:00.000Z"
+  // }
+});
+```
+
+#### 2. Dead Man's Switch
+
+**Check-in (Creador):**
+
+```typescript
+socket.emit('deadman:checkin', {
+  roomCode: 'ABC123',
+});
+```
+
+**Warning (Servidor → Todos):**
+
+```typescript
+socket.on('deadman:warning', (data) => {
+  // { secondsLeft: 30 }
+});
+```
+
+````
+
 #### 3. Distribución de Room Key (Solo Creador) - NUEVO
 **Cliente → Servidor:**
 ```typescript
@@ -370,9 +483,10 @@ socket.emit('room:key:share', {
   wrappedRoomKey: "room_key_encriptada_con_ECDH",
   senderAlias: "AliasDelCreador"
 });
-```
+````
 
 **Servidor → Participante específico:**
+
 ```typescript
 socket.on('room:key:receive', (data) => {
   // {
@@ -385,22 +499,25 @@ socket.on('room:key:receive', (data) => {
 ```
 
 #### 3. Indicadores de Escritura
+
 **Cliente → Servidor:**
+
 ```typescript
 // Comenzar a escribir
 socket.emit('typing:start', {
-  roomCode: "ABC123",
-  alias: "MiAlias"
+  roomCode: 'ABC123',
+  alias: 'MiAlias',
 });
 
 // Dejar de escribir
 socket.emit('typing:stop', {
-  roomCode: "ABC123", 
-  alias: "MiAlias"
+  roomCode: 'ABC123',
+  alias: 'MiAlias',
 });
 ```
 
 **Servidor → Otros participantes:**
+
 ```typescript
 socket.on('typing:start', (data) => {
   // { alias: "MiAlias" }
@@ -416,6 +533,7 @@ socket.on('typing:stop', (data) => {
 La aplicación tiene un endpoint HTTP básico:
 
 ### GET /
+
 ```bash
 curl http://localhost:3000
 # Respuesta: "Hello World!"
@@ -462,6 +580,7 @@ curl http://localhost:3000
 2. **Eventos de Sala para probar:**
 
 #### Crear Sala
+
 ```json
 {
   "event": "room:create",
@@ -476,6 +595,7 @@ curl http://localhost:3000
 ```
 
 #### Unirse a Sala
+
 ```json
 {
   "event": "room:join",
@@ -489,6 +609,7 @@ curl http://localhost:3000
 ```
 
 #### Obtener Mis Salas (NUEVO)
+
 ```json
 {
   "event": "room:getMyRooms",
@@ -497,6 +618,7 @@ curl http://localhost:3000
 ```
 
 #### Obtener Historial de Mensajes (NUEVO)
+
 ```json
 {
   "event": "room:getMessages",
@@ -507,6 +629,7 @@ curl http://localhost:3000
 ```
 
 #### Destruir Sala
+
 ```json
 {
   "event": "room:destroy",
@@ -520,6 +643,7 @@ curl http://localhost:3000
 3. **Eventos de Mensajes para probar:**
 
 #### Enviar Mensaje Cifrado
+
 ```json
 {
   "event": "message:send",
@@ -533,6 +657,7 @@ curl http://localhost:3000
 ```
 
 #### Indicador de Escritura
+
 ```json
 {
   "event": "typing:start",
@@ -544,6 +669,7 @@ curl http://localhost:3000
 ```
 
 #### Intercambio de Claves ECDH
+
 ```json
 {
   "event": "key:exchange",
@@ -569,6 +695,7 @@ curl http://localhost:3000
 ## Testing
 
 ### Ejecutar Tests
+
 ```bash
 # Unit tests
 pnpm run test
@@ -585,6 +712,7 @@ pnpm run test:cov
 Abre `test-client.html` en tu navegador para probar todos los eventos.
 
 #### **Eventos de Sala Básicos:**
+
 1. **Conectar** al servidor
 2. **Crear sala** con alias y configuración
 3. **Unirse a sala** con código y alias
@@ -592,6 +720,7 @@ Abre `test-client.html` en tu navegador para probar todos los eventos.
 5. **Verificar sala** para validar estado
 
 #### **Eventos de Salas Dinámicas (NUEVOS):**
+
 1. **Key Exchange Broadcast:**
    - Ingresa código de sala, tu alias y clave pública (base64)
    - Click "Enviar Clave Pública (Broadcast)"
@@ -608,6 +737,7 @@ Abre `test-client.html` en tu navegador para probar todos los eventos.
    - Solo el creador puede usar esta función
 
 #### **Eventos de Seguridad:**
+
 1. **Verificación de Sala:**
    - Ingresa código de sala
    - Click "Verificar Room"
@@ -619,6 +749,7 @@ Abre `test-client.html` en tu navegador para probar todos los eventos.
    - Todos en la sala recibirán la alerta
 
 #### **Flujo Completo de Prueba:**
+
 ```
 1. Conectar al servidor
 2. Crear sala (Alice)
@@ -633,20 +764,22 @@ Abre `test-client.html` en tu navegador para probar todos los eventos.
 ```
 
 ### Ejecutar Tests
+
 });
 
 socket.on('room:created', (data) => {
-  console.log('Sala creada:', data);
-  
-  // Unirse con otro cliente
-  const socket2 = io('http://localhost:3000');
-  socket2.emit('room:join', {
-    roomCode: data.code,
-    alias: 'Tester2',
-    isGhost: false
-  });
+console.log('Sala creada:', data);
+
+// Unirse con otro cliente
+const socket2 = io('http://localhost:3000');
+socket2.emit('room:join', {
+roomCode: data.code,
+alias: 'Tester2',
+isGhost: false
 });
-```
+});
+
+````
 
 ## Consideraciones de Seguridad
 
@@ -663,9 +796,10 @@ pnpm run start:dev    # Desarrollo con watch
 pnpm run build        # Compilar para producción
 pnpm run lint         # Linting del código
 pnpm run format       # Formatear con Prettier
-```
+````
 
 ### Estructura de Proyecto
+
 ```
 src/
 ├── app.module.ts           # Módulo raíz

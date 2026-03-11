@@ -22,7 +22,7 @@ Shadow API is a secure chat backend built with NestJS that implements end-to-end
 
 ### Prerequisites
 
-- Node.js 18+ 
+- Node.js 18+
 - pnpm (recommended) / npm
 - Redis Server
 - macOS (for specific instructions)
@@ -52,6 +52,7 @@ cp .env.example .env
 ```
 
 Available variables:
+
 ```
 PORT=3000                    # Server port
 REDIS_HOST=localhost         # Redis host
@@ -96,17 +97,20 @@ brew services stop redis
 ## 🔄 Recent Updates
 
 ### ✨ TTL Management (Latest)
+
 - **Fixed Room Duration**: Rooms now last exactly 1 hour from creation
 - **Non-resettable TTL**: User joins/exits no longer extend room duration
 - **TTL Preservation**: `savePreservingTTL()` method maintains remaining time
 - **Accurate Time Display**: `expiresInSeconds` shows correct remaining time
 
 ### 👤 Creator Identification
+
 - **Room Creator Info**: `room:joined` and `room:getMyRooms` include creator details
 - **Creator Socket ID**: Always know who to request room key from
 - **Role Detection**: Distinguish between creator and participant roles
 
 ### 🔐 Security Enhancements
+
 - **Zero-Knowledge**: Server never stores room keys or private keys
 - **ECDH Key Exchange**: Secure peer-to-peer key sharing
 - **Encrypted Payloads**: All message content encrypted client-side
@@ -122,24 +126,29 @@ brew services stop redis
 ### Main Modules
 
 #### 1. Room Module (`src/modules/room/`)
+
 Manages chat room creation, joining, and destruction.
 
 **Components:**
+
 - `domain/`: Domain entities and repositories
 - `application/`: Use cases (CreateRoom, JoinRoom, DestroyRoom)
 - `infrastructure/`: Repository implementation with Redis
 - `presentation/`: WebSocket gateway for room events
 
 #### 2. Message Module (`src/modules/message/`)
+
 Handles encrypted message relay and key exchange.
 
 **Security Feature:**
 The server can NEVER decrypt messages. It only retransmits encrypted bytes.
 
 #### 3. Security Module (`src/modules/security/`)
+
 Provides cryptographic utilities and validations.
 
 #### 4. Core Infrastructure (`src/core/`)
+
 Shared configuration, error handling, and Redis connection.
 
 ## Available WebSocket Events
@@ -147,18 +156,21 @@ Shared configuration, error handling, and Redis connection.
 ### Room Events
 
 #### 1. Create Room
+
 **Client → Server:**
+
 ```typescript
 socket.emit('room:create', {
-  alias: "MyAlias",
-  password: "optional",           // Optional
-  maxParticipants: 10,            // Optional, 2-20
-  deadManSwitchInterval: 300000,  // Optional, ms
-  defaultBurnAfter: 60000         // Optional, seconds
+  alias: 'MyAlias',
+  password: 'optional', // Optional
+  maxParticipants: 10, // Optional, 2-20
+  deadManSwitchInterval: 300000, // Optional, ms
+  defaultBurnAfter: 60000, // Optional, seconds
 });
 ```
 
 **Server → Client:**
+
 ```typescript
 // Success
 socket.on('room:created', (data) => {
@@ -167,8 +179,9 @@ socket.on('room:created', (data) => {
   //   code: "ABC123",
   //   socketId: "socket_id",
   //   participantCount: 1,
-  //   settings: { maxParticipants: 10, password: "..." },
-  //   createdAt: "2024-01-01T00:00:00.000Z"
+  //   settings: { maxParticipants: 10, password: "...", ... },
+  //   createdAt: "2024-01-01T00:00:00.000Z",
+  //   expiresInSeconds: 3600        // ← NEW: Initial total time
   // }
 });
 
@@ -179,17 +192,21 @@ socket.on('error', (error) => {
 ```
 
 #### 2. Join Room
+
 **Client → Server:**
+
 ```typescript
 socket.emit('room:join', {
-  roomCode: "ABC123",
-  alias: "MyAlias",
-  isGhost: false,              // true for ghost mode
-  password: "optional"         // Only if room has password
+  roomCode: 'ABC123',
+  alias: 'MyAlias',
+  isGhost: false, // true for ghost mode
+  password: 'optional', // Only if room has password
+  publicKey: 'optional', // Optional P256 public key
 });
 ```
 
 **Server → Client:**
+
 ```typescript
 // Confirmation for the one joining
 socket.on('room:joined', (data) => {
@@ -197,26 +214,40 @@ socket.on('room:joined', (data) => {
   //   code: "ABC123",
   //   socketId: "socket_id",
   //   participantCount: 2,
-  //   settings: { maxParticipants: 10, ... }
+  //   settings: { maxParticipants: 10, ... },
+  //   creator: {                    // ← Creator information
+  //     socketId: "creator_socket_id",
+  //     alias: "CreatorName",
+  //     publicKey: "base64_public_key" // ← NEW
+  //   }
   // }
 });
 
 // Notification to other participants (if not ghost)
 socket.on('participant:joined', (data) => {
-  // { alias: "MyAlias", participantCount: 2 }
+  // {
+  //   alias: "MyAlias",
+  //   socketId: "socket_id",
+  //   publicKey: "base64...",
+  //   participantCount: 2,
+  //   roomCode: "ABC123"
+  // }
 });
 ```
 
 #### 3. Destroy Room
+
 **Client → Server:**
+
 ```typescript
 socket.emit('room:destroy', {
-  roomCode: "ABC123",
-  reason: "creatorLeft" | "manual" | "deadManSwitch"
+  roomCode: 'ABC123',
+  reason: 'creatorLeft' | 'manual' | 'deadManSwitch',
 });
 ```
 
 **Server → All:**
+
 ```typescript
 socket.on('room:destroyed', (data) => {
   // {
@@ -227,7 +258,9 @@ socket.on('room:destroyed', (data) => {
 ```
 
 #### 4. Participant Left
+
 **Server → Other participants:**
+
 ```typescript
 socket.on('participant:left', (data) => {
   // { alias: "MyAlias", participantCount: 1 }
@@ -235,12 +268,15 @@ socket.on('participant:left', (data) => {
 ```
 
 #### 5. Get My Rooms (NEW)
+
 **Client → Server:**
+
 ```typescript
 socket.emit('room:getMyRooms');
 ```
 
 **Server → Client:**
+
 ```typescript
 socket.on('room:myRooms', (data) => {
   console.log(data);
@@ -249,10 +285,15 @@ socket.on('room:myRooms', (data) => {
   //     {
   //       code: "ABC123",
   //       participantCount: 3,
-  //       settings: { maxParticipants: 10, password: "..." },
+  //       settings: { maxParticipants: 10, password: "...", ... },
   //       createdAt: "2024-01-01T00:00:00.000Z",
+  //       creator: {                    // ← NEW
+  //         socketId: "creator_socket_id",
+  //         alias: "CreatorName"
+  //       },
   //       myRole: "creator" | "participant",
-  //       isGhost: false
+  //       isGhost: false,
+  //       expiresInSeconds: 3540        // ← NEW: Exact remaining time
   //     }
   //   ],
   //   count: 1
@@ -260,15 +301,43 @@ socket.on('room:myRooms', (data) => {
 });
 ```
 
-#### 6. Get Message History (NEW)
+#### 6. Verify Room (NEW)
+
 **Client → Server:**
+
 ```typescript
-socket.emit('room:getMessages', {
-  roomCode: "ABC123"
+socket.emit('room:verify', {
+  roomCode: 'ABC123',
 });
 ```
 
 **Server → Client:**
+
+```typescript
+socket.on('room:verified', (data) => {
+  // {
+  //   exists: true,
+  //   isValid: true,
+  //   participantCount: 2,
+  //   creator: { socketId: "...", alias: "..." },
+  //   expiresInSeconds: 3500,
+  //   settings: { ... }
+  // }
+});
+```
+
+#### 7. Get Message History
+
+**Client → Server:**
+
+```typescript
+socket.emit('room:getMessages', {
+  roomCode: 'ABC123',
+});
+```
+
+**Server → Client:**
+
 ```typescript
 socket.on('room:messages', (data) => {
   console.log(data);
@@ -291,17 +360,20 @@ socket.on('room:messages', (data) => {
 ### Message Events
 
 #### 1. Send Encrypted Message
+
 **Client → Server:**
+
 ```typescript
 socket.emit('message:send', {
-  roomCode: "ABC123",
-  encryptedPayload: "base64_encrypted_bytes", // Encrypted message in base64
-  senderAlias: "MyAlias",
-  burnAfter: 60                                // Optional, seconds
+  roomCode: 'ABC123',
+  encryptedPayload: 'base64_encrypted_bytes', // Encrypted message in base64
+  senderAlias: 'MyAlias',
+  burnAfter: 60, // Optional, seconds
 });
 ```
 
 **Server → Recipients:**
+
 ```typescript
 socket.on('message:receive', (data) => {
   // {
@@ -320,26 +392,29 @@ socket.on('message:sent', (data) => {
 ```
 
 #### 2. ECDH Key Exchange (Dynamic Room)
+
 **Client → Server:**
+
 ```typescript
 // Broadcast public key to entire room
 socket.emit('key:exchange', {
-  roomCode: "ABC123",
-  publicKey: "P256_public_key_in_base64",
-  participantAlias: "MyAlias"
+  roomCode: 'ABC123',
+  publicKey: 'P256_public_key_in_base64',
+  participantAlias: 'MyAlias',
   // NOTE: No targetSocketId - it's broadcast to entire room
 });
 
 // Optional: Send to specific participant
 socket.emit('key:exchange', {
-  roomCode: "ABC123",
-  targetSocketId: "specific_socket_id",
-  publicKey: "P256_public_key_in_base64",
-  participantAlias: "MyAlias"
+  roomCode: 'ABC123',
+  targetSocketId: 'specific_socket_id',
+  publicKey: 'P256_public_key_in_base64',
+  participantAlias: 'MyAlias',
 });
 ```
 
 **Server → All in room:**
+
 ```typescript
 socket.on('key:receive', (data) => {
   // {
@@ -351,6 +426,53 @@ socket.on('key:receive', (data) => {
 });
 ```
 
+### Security and Control Events
+
+#### 1. Security Alert
+
+**Client → Server:**
+
+```typescript
+socket.emit('security:alert', {
+  roomCode: 'ABC123',
+  threatType:
+    'screenshot' | 'screenRecording' | 'clipboardCopy' | 'exportAttempt',
+  reporterAlias: 'MyAlias',
+});
+```
+
+**Server → All:**
+
+```typescript
+socket.on('security:alert', (data) => {
+  // {
+  //   threatType: "screenshot",
+  //   reporterAlias: "MyAlias",
+  //   detectedAt: "2024-01-01T00:00:00.000Z"
+  // }
+});
+```
+
+#### 2. Dead Man's Switch
+
+**Check-in (Creator):**
+
+```typescript
+socket.emit('deadman:checkin', {
+  roomCode: 'ABC123',
+});
+```
+
+**Warning (Server → All):**
+
+```typescript
+socket.on('deadman:warning', (data) => {
+  // { secondsLeft: 30 }
+});
+```
+
+````
+
 #### 3. Room Key Distribution (Creator Only) - NEW
 **Client → Server:**
 ```typescript
@@ -361,9 +483,10 @@ socket.emit('room:key:share', {
   wrappedRoomKey: "room_key_encrypted_with_ECDH",
   senderAlias: "CreatorAlias"
 });
-```
+````
 
 **Server → Specific participant:**
+
 ```typescript
 socket.on('room:key:receive', (data) => {
   // {
@@ -376,22 +499,25 @@ socket.on('room:key:receive', (data) => {
 ```
 
 #### 3. Typing Indicators
+
 **Client → Server:**
+
 ```typescript
 // Start typing
 socket.emit('typing:start', {
-  roomCode: "ABC123",
-  alias: "MyAlias"
+  roomCode: 'ABC123',
+  alias: 'MyAlias',
 });
 
 // Stop typing
 socket.emit('typing:stop', {
-  roomCode: "ABC123", 
-  alias: "MyAlias"
+  roomCode: 'ABC123',
+  alias: 'MyAlias',
 });
 ```
 
 **Server → Other participants:**
+
 ```typescript
 socket.on('typing:start', (data) => {
   // { alias: "MyAlias" }
@@ -407,6 +533,7 @@ socket.on('typing:stop', (data) => {
 The application has a basic HTTP endpoint:
 
 ### GET /
+
 ```bash
 curl http://localhost:3000
 # Response: "Hello World!"
@@ -453,6 +580,7 @@ curl http://localhost:3000
 2. **Room Events to test:**
 
 #### Create Room
+
 ```json
 {
   "event": "room:create",
@@ -467,6 +595,7 @@ curl http://localhost:3000
 ```
 
 #### Join Room
+
 ```json
 {
   "event": "room:join",
@@ -480,6 +609,7 @@ curl http://localhost:3000
 ```
 
 #### Get My Rooms (NEW)
+
 ```json
 {
   "event": "room:getMyRooms",
@@ -488,6 +618,7 @@ curl http://localhost:3000
 ```
 
 #### Get Message History (NEW)
+
 ```json
 {
   "event": "room:getMessages",
@@ -498,6 +629,7 @@ curl http://localhost:3000
 ```
 
 #### Destroy Room
+
 ```json
 {
   "event": "room:destroy",
@@ -511,6 +643,7 @@ curl http://localhost:3000
 3. **Message Events to test:**
 
 #### Send Encrypted Message
+
 ```json
 {
   "event": "message:send",
@@ -524,6 +657,7 @@ curl http://localhost:3000
 ```
 
 #### Typing Indicator
+
 ```json
 {
   "event": "typing:start",
@@ -535,7 +669,8 @@ curl http://localhost:3000
 ```
 
 #### ECDH Key Exchange
-```json
+
+````json
 {
   "event": "key:exchange",
   "data": {
@@ -561,20 +696,22 @@ pnpm run test:e2e
 
 # Coverage
 pnpm run test:cov
-```
+````
 
 ### Test with Test Client
 
 Open `test-client.html` in your browser to test all events.
 
 #### **Basic Room Events:**
+
 1. **Connect** to server
-2. **Create room** with alias and configuration  
+2. **Create room** with alias and configuration
 3. **Join room** with code and alias
 4. **Get my rooms** to see participants and creator
 5. **Verify room** to validate room status
 
 #### **Dynamic Room Events (NEW):**
+
 1. **Key Exchange Broadcast:**
    - Enter room code, your alias, and public key (base64)
    - Click "Send Public Key (Broadcast)"
@@ -591,6 +728,7 @@ Open `test-client.html` in your browser to test all events.
    - Only creator can use this function
 
 #### **Security Events:**
+
 1. **Room Verification:**
    - Enter room code
    - Click "Verify Room"
@@ -602,6 +740,7 @@ Open `test-client.html` in your browser to test all events.
    - Everyone in room will receive the alert
 
 #### **Complete Test Flow:**
+
 ```
 1. Connect to server
 2. Create room (Alice)
@@ -616,8 +755,10 @@ Open `test-client.html` in your browser to test all events.
 ```
 
 ### Run Tests
+
 });
-```
+
+````
 
 ## Security Considerations
 
@@ -634,9 +775,10 @@ pnpm run start:dev    # Development with watch
 pnpm run build        # Compile for production
 pnpm run lint         # Code linting
 pnpm run format       # Format with Prettier
-```
+````
 
 ### Project Structure
+
 ```
 src/
 ├── app.module.ts           # Root module
