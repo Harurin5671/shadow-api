@@ -7,6 +7,7 @@ export interface RoomParticipant {
   alias: string;
   isGhost: boolean;
   isCreator: boolean;
+  publicKey?: string;
   joinedAt: string;    // ISO string (Redis no soporta Date nativo)
 }
 

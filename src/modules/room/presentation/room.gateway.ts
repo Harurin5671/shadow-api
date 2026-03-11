@@ -36,11 +36,16 @@ class JoinRoomDto {
   @IsString() alias: string;
   @IsBoolean() isGhost: boolean;
   @IsOptional() @IsString() password?: string;
+  @IsOptional() @IsString() publicKey?: string;
 }
 
 class DestroyRoomDto {
   @IsString() roomCode: string;
   @IsString() reason: DestructionReason;
+}
+
+class VerifyRoomDto {
+  @IsString() roomCode: string;
 }
 
 @WebSocketGateway({
@@ -61,8 +66,16 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // ── Conexion / Desconexion ────────────────────────────
 
-  handleConnection(client: Socket) {
-    console.log(`🔌 Cliente conectado: ${client.id}`);
+  async handleConnection(client: Socket) {
+    console.log(`🔌 [RoomGateway] NUEVA CONEXIÓN: ${client.id}`);
+    
+    client.on('disconnecting', (reason) => {
+      console.log(`🔌 [RoomGateway] Cliente ${client.id} desconectándose - Razón: ${reason}`);
+    });
+
+    client.on('disconnect', () => {
+      console.log(`🔌 [RoomGateway] Cliente ${client.id} desconectado completamente`);
+    });
   }
 
   async handleDisconnect(client: Socket) {
@@ -98,7 +111,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     // Notificar al resto que salió
-    await this.roomRepository.save(room);
+    await this.roomRepository.savePreservingTTL(room);
     this.server.to(roomCode).emit('participant:left', {
       alias: removed.alias,
       participantCount: room.participantCount,
@@ -114,15 +127,22 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const rooms = await this.roomRepository.findByParticipant(client.id);
       
-      const roomsInfo = await Promise.all(rooms.map(async room => ({
-        code: room.code,
-        participantCount: room.participantCount,
-        settings: room.settings,
-        createdAt: room.createdAt,
-        myRole: room.participants.find(p => p.id === client.id)?.isCreator ? 'creator' : 'participant',
-        isGhost: room.participants.find(p => p.id === client.id)?.isGhost ?? false,
-        expiresInSeconds: await this.roomRepository.getTTL(room.code),
-      })));
+      const roomsInfo = await Promise.all(rooms.map(async room => {
+        const creator = room.participants.find(p => p.isCreator);
+        return {
+          code: room.code,
+          participantCount: room.participantCount,
+          settings: room.settings,
+          createdAt: room.createdAt,
+          creator: creator ? {
+            socketId: creator.id,
+            alias: creator.alias
+          } : null,
+          myRole: room.participants.find(p => p.id === client.id)?.isCreator ? 'creator' : 'participant',
+          isGhost: room.participants.find(p => p.id === client.id)?.isGhost ?? false,
+          expiresInSeconds: await this.roomRepository.getTTL(room.code),
+        };
+      }));
 
       client.emit('room:myRooms', {
         rooms: roomsInfo,
@@ -176,7 +196,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() dto: JoinRoomDto,
   ) {
     try {
-      const { room } = await this.joinRoomUseCase.execute({
+      const { room, creator } = await this.joinRoomUseCase.execute({
         roomCode: dto.roomCode,
         socketId: client.id,
         alias: dto.alias,
@@ -194,12 +214,19 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
         socketId: client.id,
         participantCount: room.participantCount,
         settings: room.settings,
+        creator: creator ? {
+          socketId: creator.socketId,
+          alias: creator.alias,
+          publicKey: creator.publicKey
+        } : null
       });
 
       // Notificar al resto (solo si no es fantasma)
       if (!dto.isGhost) {
         client.to(dto.roomCode).emit('participant:joined', {
           alias: dto.alias,
+          socketId: client.id,
+          publicKey: dto.publicKey,
           participantCount: room.participantCount,
           roomCode: dto.roomCode,
         });
@@ -229,6 +256,63 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
         socket.leave(dto.roomCode);
       }
     } catch (error) {
+      this.emitError(client, error);
+    }
+  }
+
+  @SubscribeMessage('room:verify')
+  async onVerifyRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() dto: VerifyRoomDto,
+  ) {
+    try {
+      console.log(`🔍 [RoomGateway] INICIO room:verify`);
+      console.log(`📋 [RoomGateway] DTO recibido:`, {
+        roomCode: dto.roomCode,
+        clientSocketId: client.id
+      });
+
+      const room = await this.roomRepository.findByCode(dto.roomCode);
+      const ttl = room ? await this.roomRepository.getTTL(dto.roomCode) : -1;
+      
+      console.log(`🔍 [RoomGateway] Buscando sala ${dto.roomCode}`);
+      console.log(`📊 [RoomGateway] Resultados:`, {
+        roomExists: !!room,
+        ttl: ttl,
+        participantCount: room?.participantCount || 0
+      });
+      
+      const creator = room?.participants.find(p => p.isCreator);
+      
+      if (creator) {
+        console.log(`👑 [RoomGateway] Creador encontrado:`, {
+          socketId: creator.id,
+          alias: creator.alias
+        });
+      } else {
+        console.log(`❌ [RoomGateway] No se encontró creador para la sala ${dto.roomCode}`);
+      }
+
+      const verificationData = {
+        exists: !!room,
+        participantCount: room?.participantCount || 0,
+        creator: creator ? {
+          socketId: creator.id,
+          alias: creator.alias
+        } : null,
+        expiresInSeconds: ttl,
+        settings: room?.settings || null,
+        isValid: ttl > 0
+      };
+
+      console.log(`📡 [RoomGateway] Enviando verificación:`, verificationData);
+
+      client.emit('room:verified', verificationData);
+
+      console.log(`✅ [RoomGateway] Verificación de sala completada exitosamente`);
+      
+    } catch (error) {
+      console.error(`❌ [RoomGateway] Error en room:verify:`, error);
       this.emitError(client, error);
     }
   }

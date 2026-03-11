@@ -3,65 +3,392 @@
 <head>
     <title>Test Shadow API</title>
     <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        button { margin: 5px; padding: 10px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        input { margin: 5px; padding: 8px; border: 1px solid #ccc; border-radius: 3px; }
+        #logs { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 5px; padding: 15px; margin-top: 20px; max-height: 400px; overflow-y: auto; }
+        .log-entry { margin-bottom: 10px; padding: 8px; border-left: 3px solid #007bff; background: white; }
+        .error { border-left-color: #dc3545; background: #f8d7da; }
+        .success { border-left-color: #28a745; background: #d4edda; }
+        .message { border-left-color: #ffc107; background: #fff3cd; }
+    </style>
 </head>
 <body>
     <h1>Test Shadow API</h1>
-    <button onclick="connect()">Conectar</button>
-    <button onclick="getMyRooms()">Obtener Mis Rooms</button>
-    <button onclick="createRoom()">Crear Room</button>
+    
+    <div>
+        <button onclick="connect()">Conectar</button>
+        <button onclick="disconnect()">Desconectar</button>
+    </div>
+    
+    <h3>Eventos de Sala</h3>
+    <div>
+        <input type="text" id="roomAlias" placeholder="Tu Alias" value="Tester">
+        <input type="text" id="roomPassword" placeholder="Contraseña (opcional)">
+        <input type="number" id="maxParticipants" placeholder="Max Participantes" value="5">
+        <button onclick="createRoom()">Crear Room</button>
+    </div>
+    
+    <div>
+        <input type="text" id="joinRoomCode" placeholder="Código Room">
+        <input type="text" id="joinAlias" placeholder="Tu Alias" value="Tester2">
+        <label><input type="checkbox" id="isGhost"> Modo Fantasma</label>
+        <button onclick="joinRoom()">Unirse a Room</button>
+    </div>
+    
+    <div>
+        <button onclick="getMyRooms()">Obtener Mis Rooms</button>
+        <input type="text" id="historyRoomCode" placeholder="Código Room para historial">
+        <button onclick="getRoomMessages()">Obtener Historial</button>
+    </div>
+    
+    <div>
+        <input type="text" id="messageRoomCode" placeholder="Código Room">
+        <input type="text" id="messageText" placeholder="Mensaje cifrado en base64">
+        <input type="number" id="burnAfter" placeholder="Autodestruir (segundos)" value="60">
+        <button onclick="sendMessage()">Enviar Mensaje</button>
+    </div>
+    
+    <h3>Key Exchange (Sala Dinámica)</h3>
+    <div>
+        <input type="text" id="keyExchangeRoomCode" placeholder="Código Room">
+        <input type="text" id="keyExchangeAlias" placeholder="Tu Alias" value="Tester">
+        <input type="text" id="publicKey" placeholder="Clave Pública (base64)">
+        <button onclick="exchangePublicKey()">Enviar Clave Pública (Broadcast)</button>
+    </div>
+    
+    <div>
+        <input type="text" id="targetSocketId" placeholder="Socket ID Destino (opcional)">
+        <button onclick="exchangePublicKeyToTarget()">Enviar a Target Específico</button>
+    </div>
+    
+    <h3>Room Key Distribution (Solo Creador)</h3>
+    <div>
+        <input type="text" id="shareRoomCode" placeholder="Código Room">
+        <input type="text" id="targetParticipant" placeholder="Alias del Destino">
+        <input type="text" id="wrappedRoomKey" placeholder="Room Key Encriptada (base64)">
+        <input type="text" id="shareSenderAlias" placeholder="Tu Alias (creador)" value="Tester">
+        <button onclick="shareRoomKey()">Compartir Room Key</button>
+    </div>
+    
+    <h3>Verificación y Seguridad</h3>
+    <div>
+        <input type="text" id="verifyRoomCode" placeholder="Código Room">
+        <button onclick="verifyRoom()">Verificar Room</button>
+    </div>
+    
+    <div>
+        <input type="text" id="alertRoomCode" placeholder="Código Room">
+        <select id="alertType">
+            <option value="compromised_key">Clave Comprometida</option>
+            <option value="suspicious_activity">Actividad Sospechosa</option>
+            <option value="room_key_integrity_failure">Fallo de Integridad</option>
+        </select>
+        <button onclick="sendSecurityAlert()">Enviar Alerta de Seguridad</button>
+    </div>
+    
+    <h3>Indicadores de Escritura</h3>
+    <div>
+        <input type="text" id="typingRoomCode" placeholder="Código Room">
+        <button onclick="startTyping()">Comenzar a Escribir</button>
+        <button onclick="stopTyping()">Dejar de Escribir</button>
+    </div>
+    
     <div id="logs"></div>
 
     <script>
         let socket;
+        let currentRoomCode = '';
 
-        function log(message) {
+        function log(message, type = 'info') {
             const logs = document.getElementById('logs');
-            logs.innerHTML += '<pre>' + new Date().toLocaleTimeString() + ' - ' + JSON.stringify(message, null, 2) + '</pre>';
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.innerHTML = `<strong>${new Date().toLocaleTimeString()}</strong> - ${JSON.stringify(message, null, 2)}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
         }
 
         function connect() {
             socket = io('http://localhost:3000');
             
             socket.on('connect', () => {
-                log('Conectado: ' + socket.id);
-            });
-
-            socket.on('room:myRooms', (data) => {
-                log('RESPUESTA room:myRooms:');
-                log(data);
+                log('Conectado: ' + socket.id, 'success');
             });
 
             socket.on('room:created', (data) => {
-                log('Room creada:');
-                log(data);
+                log('Room creada:', 'success');
+                log(data, 'success');
+                currentRoomCode = data.code;
+            });
+
+            socket.on('room:joined', (data) => {
+                log('Unido a room:', 'success');
+                log(data, 'success');
+                currentRoomCode = data.code;
+            });
+
+            socket.on('room:myRooms', (data) => {
+                log('Mis rooms:', 'success');
+                log(data, 'success');
+            });
+
+            socket.on('room:messages', (data) => {
+                log('Historial de mensajes:', 'message');
+                log(data, 'message');
+            });
+
+            socket.on('message:receive', (data) => {
+                log('Mensaje recibido:', 'message');
+                log(data, 'message');
+            });
+
+            socket.on('message:sent', (data) => {
+                log('Mensaje enviado:', 'success');
+                log(data, 'success');
+            });
+
+            socket.on('typing:start', (data) => {
+                log(data.alias + ' está escribiendo...', 'message');
+            });
+
+            socket.on('typing:stop', (data) => {
+                log(data.alias + ' dejó de escribir', 'message');
+            });
+
+            socket.on('key:receive', (data) => {
+                log('Clave recibida:', 'message');
+                log(data, 'message');
+            });
+
+            socket.on('room:key:receive', (data) => {
+                log('Room Key recibida:', 'success');
+                log(data, 'success');
+            });
+
+            socket.on('room:verified', (data) => {
+                log('Room verificada:', 'success');
+                log(data, 'success');
+            });
+
+            socket.on('security:alert', (data) => {
+                log('Alerta de seguridad:', 'error');
+                log(data, 'error');
+            });
+
+            socket.on('participant:joined', (data) => {
+                log('Participante unido: ' + data.alias, 'success');
+            });
+
+            socket.on('participant:left', (data) => {
+                log('Participante se fue: ' + data.alias, 'message');
             });
 
             socket.on('error', (error) => {
-                log('Error:');
-                log(error);
+                log('Error:', 'error');
+                log(error, 'error');
+            });
+
+            socket.on('disconnect', () => {
+                log('Desconectado', 'error');
+            });
+        }
+
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                log('Desconectado manualmente', 'info');
+            }
+        }
+
+        function createRoom() {
+            const alias = document.getElementById('roomAlias').value;
+            const password = document.getElementById('roomPassword').value;
+            const maxParticipants = parseInt(document.getElementById('maxParticipants').value);
+            
+            log('Enviando room:create', 'info');
+            socket.emit('room:create', {
+                alias: alias,
+                password: password,
+                maxParticipants: maxParticipants
+            });
+        }
+
+        function joinRoom() {
+            const roomCode = document.getElementById('joinRoomCode').value;
+            const alias = document.getElementById('joinAlias').value;
+            const isGhost = document.getElementById('isGhost').checked;
+            const password = document.getElementById('roomPassword').value;
+            
+            log('Enviando room:join', 'info');
+            socket.emit('room:join', {
+                roomCode: roomCode,
+                alias: alias,
+                isGhost: isGhost,
+                password: password
             });
         }
 
         function getMyRooms() {
-            if (!socket) {
-                alert('Primero conecta');
-                return;
-            }
-            log('ENVIANDO room:getMyRooms');
+            log('Enviando room:getMyRooms', 'info');
             socket.emit('room:getMyRooms');
         }
 
-        function createRoom() {
-            if (!socket) {
-                alert('Primero conecta');
+        function getRoomMessages() {
+            const roomCode = document.getElementById('historyRoomCode').value;
+            if (!roomCode) {
+                log('Error: Ingresa un código de room', 'error');
                 return;
             }
-            log('ENVIANDO room:create');
-            socket.emit('room:create', {
-                alias: 'Tester',
-                maxParticipants: 5
+            
+            log('Enviando room:getMessages para ' + roomCode, 'info');
+            socket.emit('room:getMessages', {
+                roomCode: roomCode
             });
         }
+
+        function sendMessage() {
+            const roomCode = document.getElementById('messageRoomCode').value || currentRoomCode;
+            const encryptedPayload = document.getElementById('messageText').value;
+            const burnAfter = parseInt(document.getElementById('burnAfter').value);
+            
+            if (!roomCode || !encryptedPayload) {
+                log('Error: Ingresa roomCode y mensaje', 'error');
+                return;
+            }
+            
+            log('Enviando message:send', 'info');
+            socket.emit('message:send', {
+                roomCode: roomCode,
+                encryptedPayload: encryptedPayload,
+                senderAlias: 'Tester',
+                burnAfter: burnAfter
+            });
+        }
+
+        function startTyping() {
+            const roomCode = document.getElementById('typingRoomCode').value || currentRoomCode;
+            if (!roomCode) {
+                log('Error: Ingresa roomCode', 'error');
+                return;
+            }
+            
+            socket.emit('typing:start', {
+                roomCode: roomCode,
+                alias: 'Tester'
+            });
+        }
+
+        function stopTyping() {
+            const roomCode = document.getElementById('typingRoomCode').value || currentRoomCode;
+            if (!roomCode) {
+                log('Error: Ingresa roomCode', 'error');
+                return;
+            }
+            
+            socket.emit('typing:stop', {
+                roomCode: roomCode,
+                alias: 'Tester'
+            });
+        }
+
+        // Nuevas funciones para salas dinámicas
+        function exchangePublicKey() {
+            const roomCode = document.getElementById('keyExchangeRoomCode').value;
+            const alias = document.getElementById('keyExchangeAlias').value;
+            const publicKey = document.getElementById('publicKey').value;
+            
+            if (!roomCode || !alias || !publicKey) {
+                log('Error: Ingresa roomCode, alias y publicKey', 'error');
+                return;
+            }
+            
+            log('Enviando key:exchange (broadcast)', 'info');
+            socket.emit('key:exchange', {
+                roomCode: roomCode,
+                publicKey: publicKey,
+                participantAlias: alias
+                // NOTA: No targetSocketId - es broadcast a sala completa
+            });
+        }
+
+        function exchangePublicKeyToTarget() {
+            const roomCode = document.getElementById('keyExchangeRoomCode').value;
+            const alias = document.getElementById('keyExchangeAlias').value;
+            const publicKey = document.getElementById('publicKey').value;
+            const targetSocketId = document.getElementById('targetSocketId').value;
+            
+            if (!roomCode || !alias || !publicKey || !targetSocketId) {
+                log('Error: Ingresa roomCode, alias, publicKey y targetSocketId', 'error');
+                return;
+            }
+            
+            log('Enviando key:exchange (a target específico)', 'info');
+            socket.emit('key:exchange', {
+                roomCode: roomCode,
+                targetSocketId: targetSocketId,
+                publicKey: publicKey,
+                participantAlias: alias
+            });
+        }
+
+        function shareRoomKey() {
+            const roomCode = document.getElementById('shareRoomCode').value;
+            const targetParticipant = document.getElementById('targetParticipant').value;
+            const wrappedRoomKey = document.getElementById('wrappedRoomKey').value;
+            const senderAlias = document.getElementById('shareSenderAlias').value;
+            
+            if (!roomCode || !targetParticipant || !wrappedRoomKey || !senderAlias) {
+                log('Error: Ingresa roomCode, targetParticipant, wrappedRoomKey y senderAlias', 'error');
+                return;
+            }
+            
+            log('Enviando room:key:share', 'info');
+            socket.emit('room:key:share', {
+                roomCode: roomCode,
+                targetParticipant: targetParticipant,
+                wrappedRoomKey: wrappedRoomKey,
+                senderAlias: senderAlias
+            });
+        }
+
+        function verifyRoom() {
+            const roomCode = document.getElementById('verifyRoomCode').value;
+            
+            if (!roomCode) {
+                log('Error: Ingresa roomCode', 'error');
+                return;
+            }
+            
+            log('Enviando room:verify', 'info');
+            socket.emit('room:verify', {
+                roomCode: roomCode
+            });
+        }
+
+        function sendSecurityAlert() {
+            const roomCode = document.getElementById('alertRoomCode').value;
+            const alertType = document.getElementById('alertType').value;
+            
+            if (!roomCode || !alertType) {
+                log('Error: Ingresa roomCode y alertType', 'error');
+                return;
+            }
+            
+            log('Enviando security:alert', 'info');
+            socket.emit('security:alert', {
+                type: alertType,
+                data: {
+                    roomCode: roomCode,
+                    details: 'Test security alert from test client'
+                }
+            });
+        }
+
+        // Mensaje de ejemplo cifrado (base64 de "Hola mundo")
+        document.getElementById('messageText').value = 'SG9sYSBtdW5kbw==';
     </script>
 </body>
 </html>

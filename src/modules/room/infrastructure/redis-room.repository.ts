@@ -5,7 +5,9 @@ import { RoomRepository } from '../domain/room.repository';
 
 const ROOM_TTL = 3600; // 1 hora en segundos
 const ROOM_KEY = (code: string) => `room:${code}`;
+const MESSAGE_KEY = (roomCode: string, messageId: string) => `messages:${roomCode}:${messageId}`;
 const ROOM_PATTERN = 'room:*';
+const MESSAGE_PATTERN = (roomCode: string) => `messages:${roomCode}:*`;
 
 @Injectable()
 export class RedisRoomRepository implements RoomRepository {
@@ -13,6 +15,16 @@ export class RedisRoomRepository implements RoomRepository {
 
   async save(room: Room): Promise<void> {
     await this.redis.set(ROOM_KEY(room.code), room.toJSON(), ROOM_TTL);
+  }
+
+  async saveWithoutTTL(room: Room): Promise<void> {
+    await this.redis.set(ROOM_KEY(room.code), room.toJSON());
+  }
+
+  async savePreservingTTL(room: Room): Promise<void> {
+    const key = ROOM_KEY(room.code);
+    const currentTTL = await this.redis.getTTL(key);
+    await this.redis.set(key, room.toJSON(), currentTTL > 0 ? currentTTL : ROOM_TTL);
   }
 
   async getTTL(code: string): Promise<number> {
@@ -63,5 +75,42 @@ export class RedisRoomRepository implements RoomRepository {
 
   async resetExpiry(code: string): Promise<void> {
     await this.redis.resetTTL(ROOM_KEY(code), ROOM_TTL);
+  }
+
+  async resetTTL(key: string, ttlSeconds: number): Promise<void> {
+    await this.redis.resetTTL(key, ttlSeconds);
+  }
+
+  async keys(pattern: string): Promise<string[]> {
+    return this.redis.keys(pattern);
+  }
+
+  // ── Métodos para mensajes temporales ────────────────────
+
+  async saveMessage(roomCode: string, messageId: string, message: any, ttl: number = ROOM_TTL): Promise<void> {
+    const key = MESSAGE_KEY(roomCode, messageId);
+    await this.redis.set(key, message, ttl);
+  }
+
+  async getRoomMessages(roomCode: string): Promise<any[]> {
+    const messageKeys = await this.redis.keys(MESSAGE_PATTERN(roomCode));
+    const messages: any[] = [];
+
+    for (const key of messageKeys) {
+      const message = await this.redis.get(key);
+      if (message) {
+        messages.push(message);
+      }
+    }
+
+    // Ordenar por timestamp (sentAt)
+    messages.sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
+    
+    return messages;
+  }
+
+  async deleteMessage(roomCode: string, messageId: string): Promise<void> {
+    const key = MESSAGE_KEY(roomCode, messageId);
+    await this.redis.del(key);
   }
 }

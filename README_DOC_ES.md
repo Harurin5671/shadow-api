@@ -11,10 +11,12 @@ Shadow API es un backend de chat seguro construido con NestJS que implementa cif
 ### Características Principales
 
 - 🔐 **Cifrado End-to-End**: Los mensajes se cifran en el cliente y solo se descifran en el destinatario
-- 🏠 **Salas Temporales**: Las salas tienen un TTL de 1 hora y se destruyen automáticamente
+- 🏠 **Salas Temporales**: Las salas tienen un TTL de 1 hora exacto (no reiniciable)
+- 👤 **Identificación de Creador**: Siempre sabes quién creó cada sala
 - 👻 **Modo Fantasma**: Usuarios pueden unirse a salas sin ser detectados
 - ⏰ **Mensajes Auto-Destructivos**: Configurables para eliminarse después de ser leídos
 - 🚀 **Alto Rendimiento**: Construido con NestJS y Redis para máxima velocidad
+- ⏱️ **Preservación de TTL**: La duración de la sala se mantiene durante uniones/salidas
 
 ## Instalación y Configuración
 
@@ -90,6 +92,30 @@ Cuando termines de trabajar, puedes detener Redis con:
 ```bash
 brew services stop redis
 ```
+
+## 🔄 Actualizaciones Recientes
+
+### ✨ Gestión de TTL (Último)
+- **Duración Fija de Salas**: Las salas ahora duran exactamente 1 hora desde creación
+- **TTL No Reiniciable**: Las uniones/salidas de usuarios ya no extienden la duración
+- **Preservación de TTL**: Método `savePreservingTTL()` mantiene el tiempo restante
+- **Tiempo Exacto**: `expiresInSeconds` muestra el tiempo restante correcto
+
+### 👤 Identificación de Creador
+- **Info del Creador**: `room:joined` y `room:getMyRooms` incluyen detalles del creador
+- **Socket ID del Creador**: Siempre sabes a quién solicitar la room key
+- **Detección de Rol**: Distinguir entre rol de creador y participante
+
+### 🔐 Mejoras de Seguridad
+- **Zero-Knowledge**: Servidor nunca almacena room keys ni claves privadas
+- **Intercambio ECDH**: Compartición segura de claves peer-to-peer
+- **Payloads Cifrados**: Todo el contenido de mensajes se cifra del lado del cliente
+- **Validación de Claves Públicas**: Valida formatos de clave P256
+- **Rate Limiting**: Previene abuso en intercambios de claves
+- **Alertas de Seguridad**: Detección de amenazas en tiempo real desde iOS
+- **Verificación de Salas**: Validar estado de sala antes de unirse
+
+---
 
 ## Arquitectura del Sistema
 
@@ -171,7 +197,11 @@ socket.on('room:joined', (data) => {
   //   code: "ABC123",
   //   socketId: "socket_id",
   //   participantCount: 2,
-  //   settings: { maxParticipants: 10, ... }
+  //   settings: { maxParticipants: 10, ... },
+  //   creator: {                    // ← NUEVO: Información del creador
+  //     socketId: "creator_socket_id",
+  //     alias: "NombreDelCreador"
+  //   }
   // }
 });
 
@@ -225,11 +255,44 @@ socket.on('room:myRooms', (data) => {
   //       participantCount: 3,
   //       settings: { maxParticipants: 10, password: "..." },
   //       createdAt: "2024-01-01T00:00:00.000Z",
+  //       creator: {                    // ← NUEVO: Información del creador
+  //         socketId: "creator_socket_id",
+  //         alias: "NombreDelCreador"
+  //       },
   //       myRole: "creator" | "participant",
-  //       isGhost: false
+  //       isGhost: false,
+  //       expiresInSeconds: 3540        // ← NUEVO: Tiempo restante exacto
   //     }
   //   ],
   //   count: 1
+  // }
+});
+```
+
+#### 6. Obtener Historial de Mensajes (NUEVO)
+**Cliente → Servidor:**
+```typescript
+socket.emit('room:getMessages', {
+  roomCode: "ABC123"
+});
+```
+
+**Servidor → Cliente:**
+```typescript
+socket.on('room:messages', (data) => {
+  console.log(data);
+  // {
+  //   roomCode: "ABC123",
+  //   messages: [
+  //     {
+  //       id: "msg_123456_abcde",
+  //       encryptedPayload: "base64_encrypted_bytes",
+  //       senderAlias: "OtroUsuario",
+  //       sentAt: "2026-03-08T16:30:00.000Z",
+  //       burnAfter: 60
+  //     }
+  //   ],
+  //   count: 5
   // }
 });
 ```
@@ -241,9 +304,9 @@ socket.on('room:myRooms', (data) => {
 ```typescript
 socket.emit('message:send', {
   roomCode: "ABC123",
-  encryptedPayload: "base64_encrypted_bytes", // Mensaje cifrado en base64
+  encryptedPayload: "mensaje_cifrado_en_base64",
   senderAlias: "MiAlias",
-  burnAfter: 60                                // Opcional, segundos
+  burnAfter: 300  // opcional - segundos para auto-destruir
 });
 ```
 
@@ -265,24 +328,58 @@ socket.on('message:sent', (data) => {
 });
 ```
 
-#### 2. Intercambio de Claves ECDH
+#### 2. Intercambio de Claves ECDH (Sala Dinámica)
 **Cliente → Servidor:**
 ```typescript
+// Broadcast de clave pública a toda la sala
 socket.emit('key:exchange', {
   roomCode: "ABC123",
-  targetSocketId: "socket_id_destino",
-  wrappedKey: "clave_sala_cifrada_con_ecdh",
-  publicKey: "clave_publica_emisor"
+  publicKey: "clave_pública_P256_en_base64",
+  participantAlias: "MiAlias"
+  // NOTA: No hay targetSocketId - es broadcast a sala completa
+});
+
+// Opcional: Enviar a participante específico
+socket.emit('key:exchange', {
+  roomCode: "ABC123",
+  targetSocketId: "socket_id_específico",
+  publicKey: "clave_pública_P256_en_base64",
+  participantAlias: "MiAlias"
 });
 ```
 
-**Servidor → Destinatario específico:**
+**Servidor → Todos en sala:**
 ```typescript
 socket.on('key:receive', (data) => {
   // {
   //   fromSocketId: "socket_id_emisor",
-  //   wrappedKey: "clave_sala_cifrada_con_ecdh",
-  //   publicKey: "clave_publica_emisor"
+  //   fromAlias: "AliasDelEmisor",
+  //   publicKey: "clave_pública",
+  //   timestamp: 1640995200000
+  // }
+});
+```
+
+#### 3. Distribución de Room Key (Solo Creador) - NUEVO
+**Cliente → Servidor:**
+```typescript
+// Solo el creador puede compartir room keys
+socket.emit('room:key:share', {
+  roomCode: "ABC123",
+  targetParticipant: "AliasDestino",  // Alias del participante
+  wrappedRoomKey: "room_key_encriptada_con_ECDH",
+  senderAlias: "AliasDelCreador"
+});
+```
+
+**Servidor → Participante específico:**
+```typescript
+socket.on('room:key:receive', (data) => {
+  // {
+  //   roomCode: "ABC123",
+  //   wrappedRoomKey: "room_key_encriptada",
+  //   senderAlias: "AliasDelCreador",
+  //   timestamp: 1640995200000
   // }
 });
 ```
@@ -399,6 +496,16 @@ curl http://localhost:3000
 }
 ```
 
+#### Obtener Historial de Mensajes (NUEVO)
+```json
+{
+  "event": "room:getMessages",
+  "data": {
+    "roomCode": "ABC123"
+  }
+}
+```
+
 #### Destruir Sala
 ```json
 {
@@ -473,18 +580,59 @@ pnpm run test:e2e
 pnpm run test:cov
 ```
 
-### Probar Manualmente con Socket.IO Client
+### Probar Manualmente con Test Client
 
-```javascript
-// Ejemplo de cliente para pruebas
-import io from 'socket.io-client';
+Abre `test-client.html` en tu navegador para probar todos los eventos.
 
-const socket = io('http://localhost:3000');
+#### **Eventos de Sala Básicos:**
+1. **Conectar** al servidor
+2. **Crear sala** con alias y configuración
+3. **Unirse a sala** con código y alias
+4. **Obtener mis salas** para ver participantes y creador
+5. **Verificar sala** para validar estado
 
-// Crear sala
-socket.emit('room:create', {
-  alias: 'Tester',
-  maxParticipants: 5
+#### **Eventos de Salas Dinámicas (NUEVOS):**
+1. **Key Exchange Broadcast:**
+   - Ingresa código de sala, tu alias y clave pública (base64)
+   - Click "Enviar Clave Pública (Broadcast)"
+   - Todos en la sala recibirán tu clave pública
+
+2. **Key Exchange a Target Específico:**
+   - Ingresa socket ID del destinatario
+   - Click "Enviar a Target Específico"
+   - Solo ese participante recibirá tu clave pública
+
+3. **Distribución de Room Key (Solo Creador):**
+   - Ingresa código de sala, alias del destino y room key encriptada
+   - Click "Compartir Room Key"
+   - Solo el creador puede usar esta función
+
+#### **Eventos de Seguridad:**
+1. **Verificación de Sala:**
+   - Ingresa código de sala
+   - Click "Verificar Room"
+   - Recibirás estado completo de la sala
+
+2. **Alertas de Seguridad:**
+   - Selecciona tipo de alerta (clave comprometida, actividad sospechosa, etc.)
+   - Click "Enviar Alerta de Seguridad"
+   - Todos en la sala recibirán la alerta
+
+#### **Flujo Completo de Prueba:**
+```
+1. Conectar al servidor
+2. Crear sala (Alice)
+3. Unirse con otro cliente (Bob)
+4. Alice: Enviar clave pública (broadcast)
+5. Bob: Enviar clave pública (broadcast)
+6. Alice: Compartir room key con Bob
+7. Ambos: Enviar mensajes cifrados
+8. Probar alerts de seguridad
+9. Verificar estado de sala
+10. Probar indicadores de escritura
+```
+
+### Ejecutar Tests
 });
 
 socket.on('room:created', (data) => {

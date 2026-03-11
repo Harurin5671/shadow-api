@@ -14,10 +14,16 @@ export interface JoinRoomInput {
   alias: string;
   isGhost: boolean;
   password?: string;
+  publicKey?: string;
 }
 
 export interface JoinRoomOutput {
   room: Room;
+  creator?: {
+    socketId: string;
+    alias: string;
+    publicKey?: string;
+  } | null;
 }
 
 @Injectable()
@@ -60,12 +66,23 @@ export class JoinRoomUseCase {
       alias: input.alias,
       isGhost: input.isGhost,
       isCreator: false,
+      publicKey: input.publicKey,
       joinedAt: new Date().toISOString(),
     });
 
-    // Guardar y resetear TTL
-    await this.roomRepository.save(room);
+    // Guardar manteniendo el TTL existente
+    await this.roomRepository.savePreservingTTL(room);
 
-    return { room };
+    // Encontrar al creador para incluir en la respuesta
+    const creator = room.participants.find(p => p.isCreator);
+
+    return { 
+      room, 
+      creator: creator ? {
+        socketId: creator.id,
+        alias: creator.alias,
+        publicKey: creator.publicKey,
+      } : null
+    };
   }
 }

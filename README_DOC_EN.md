@@ -11,10 +11,12 @@ Shadow API is a secure chat backend built with NestJS that implements end-to-end
 ### Key Features
 
 - 🔐 **End-to-End Encryption**: Messages are encrypted on the client and only decrypted by the recipient
-- 🏠 **Temporary Rooms**: Rooms have a 1-hour TTL and are automatically destroyed
+- 🏠 **Temporary Rooms**: Rooms have exactly 1-hour TTL (non-resettable)
+- 👤 **Creator Identification**: Always know who created each room
 - 👻 **Ghost Mode**: Users can join rooms without being detected
 - ⏰ **Self-Destructing Messages**: Configurable to delete after being read
 - 🚀 **High Performance**: Built with NestJS and Redis for maximum speed
+- ⏱️ **TTL Preservation**: Room duration maintained during joins/exits
 
 ## Installation and Setup
 
@@ -90,6 +92,30 @@ When you're done working, you can stop Redis with:
 ```bash
 brew services stop redis
 ```
+
+## 🔄 Recent Updates
+
+### ✨ TTL Management (Latest)
+- **Fixed Room Duration**: Rooms now last exactly 1 hour from creation
+- **Non-resettable TTL**: User joins/exits no longer extend room duration
+- **TTL Preservation**: `savePreservingTTL()` method maintains remaining time
+- **Accurate Time Display**: `expiresInSeconds` shows correct remaining time
+
+### 👤 Creator Identification
+- **Room Creator Info**: `room:joined` and `room:getMyRooms` include creator details
+- **Creator Socket ID**: Always know who to request room key from
+- **Role Detection**: Distinguish between creator and participant roles
+
+### 🔐 Security Enhancements
+- **Zero-Knowledge**: Server never stores room keys or private keys
+- **ECDH Key Exchange**: Secure peer-to-peer key sharing
+- **Encrypted Payloads**: All message content encrypted client-side
+- **Public Key Validation**: Validates P256 key formats
+- **Rate Limiting**: Prevents abuse in key exchanges
+- **Security Alerts**: Real-time threat detection from iOS
+- **Room Verification**: Validate room status before joining
+
+---
 
 ## System Architecture
 
@@ -234,6 +260,34 @@ socket.on('room:myRooms', (data) => {
 });
 ```
 
+#### 6. Get Message History (NEW)
+**Client → Server:**
+```typescript
+socket.emit('room:getMessages', {
+  roomCode: "ABC123"
+});
+```
+
+**Server → Client:**
+```typescript
+socket.on('room:messages', (data) => {
+  console.log(data);
+  // {
+  //   roomCode: "ABC123",
+  //   messages: [
+  //     {
+  //       id: "msg_123456_abcde",
+  //       encryptedPayload: "base64_encrypted_bytes",
+  //       senderAlias: "OtherUser",
+  //       sentAt: "2026-03-08T16:30:00.000Z",
+  //       burnAfter: 60
+  //     }
+  //   ],
+  //   count: 5
+  // }
+});
+```
+
 ### Message Events
 
 #### 1. Send Encrypted Message
@@ -265,24 +319,58 @@ socket.on('message:sent', (data) => {
 });
 ```
 
-#### 2. ECDH Key Exchange
+#### 2. ECDH Key Exchange (Dynamic Room)
 **Client → Server:**
 ```typescript
+// Broadcast public key to entire room
 socket.emit('key:exchange', {
   roomCode: "ABC123",
-  targetSocketId: "target_socket_id",
-  wrappedKey: "room_key_encrypted_with_ecdh",
-  publicKey: "sender_public_key"
+  publicKey: "P256_public_key_in_base64",
+  participantAlias: "MyAlias"
+  // NOTE: No targetSocketId - it's broadcast to entire room
+});
+
+// Optional: Send to specific participant
+socket.emit('key:exchange', {
+  roomCode: "ABC123",
+  targetSocketId: "specific_socket_id",
+  publicKey: "P256_public_key_in_base64",
+  participantAlias: "MyAlias"
 });
 ```
 
-**Server → Specific recipient:**
+**Server → All in room:**
 ```typescript
 socket.on('key:receive', (data) => {
   // {
-  //   fromSocketId: "sender_socket_id",
-  //   wrappedKey: "room_key_encrypted_with_ecdh",
-  //   publicKey: "sender_public_key"
+  //   fromSocketId: "emitter_socket_id",
+  //   fromAlias: "EmitterAlias",
+  //   publicKey: "public_key",
+  //   timestamp: 1640995200000
+  // }
+});
+```
+
+#### 3. Room Key Distribution (Creator Only) - NEW
+**Client → Server:**
+```typescript
+// Only room creator can share room keys
+socket.emit('room:key:share', {
+  roomCode: "ABC123",
+  targetParticipant: "TargetAlias",  // Participant's alias
+  wrappedRoomKey: "room_key_encrypted_with_ECDH",
+  senderAlias: "CreatorAlias"
+});
+```
+
+**Server → Specific participant:**
+```typescript
+socket.on('room:key:receive', (data) => {
+  // {
+  //   roomCode: "ABC123",
+  //   wrappedRoomKey: "encrypted_room_key",
+  //   senderAlias: "CreatorAlias",
+  //   timestamp: 1640995200000
   // }
 });
 ```
@@ -399,6 +487,16 @@ curl http://localhost:3000
 }
 ```
 
+#### Get Message History (NEW)
+```json
+{
+  "event": "room:getMessages",
+  "data": {
+    "roomCode": "ABC123"
+  }
+}
+```
+
 #### Destroy Room
 ```json
 {
@@ -444,14 +542,6 @@ curl http://localhost:3000
     "roomCode": "ABC123",
     "targetSocketId": "target_socket_id",
     "wrappedKey": "encrypted_room_key_with_ecdh",
-    "publicKey": "sender_public_key"
-  }
-}
-```
-
-### Complete Test Flow
-
-1. **Connect** to `ws://localhost:3000`
 2. **Create room** with `room:create`
 3. **Save the room code** returned in `room:created`
 4. **Get your rooms** with `room:getMyRooms` to verify
@@ -473,30 +563,59 @@ pnpm run test:e2e
 pnpm run test:cov
 ```
 
-### Manual Testing with Socket.IO Client
+### Test with Test Client
 
-```javascript
-// Example client for testing
-import io from 'socket.io-client';
+Open `test-client.html` in your browser to test all events.
 
-const socket = io('http://localhost:3000');
+#### **Basic Room Events:**
+1. **Connect** to server
+2. **Create room** with alias and configuration  
+3. **Join room** with code and alias
+4. **Get my rooms** to see participants and creator
+5. **Verify room** to validate room status
 
-// Create room
-socket.emit('room:create', {
-  alias: 'Tester',
-  maxParticipants: 5
-});
+#### **Dynamic Room Events (NEW):**
+1. **Key Exchange Broadcast:**
+   - Enter room code, your alias, and public key (base64)
+   - Click "Send Public Key (Broadcast)"
+   - Everyone in room will receive your public key
 
-socket.on('room:created', (data) => {
-  console.log('Room created:', data);
-  
-  // Join with another client
-  const socket2 = io('http://localhost:3000');
-  socket2.emit('room:join', {
-    roomCode: data.code,
-    alias: 'Tester2',
-    isGhost: false
-  });
+2. **Key Exchange to Specific Target:**
+   - Enter target socket ID
+   - Click "Send to Specific Target"
+   - Only that participant will receive your public key
+
+3. **Room Key Distribution (Creator Only):**
+   - Enter room code, target alias, and encrypted room key
+   - Click "Share Room Key"
+   - Only creator can use this function
+
+#### **Security Events:**
+1. **Room Verification:**
+   - Enter room code
+   - Click "Verify Room"
+   - You'll receive complete room status
+
+2. **Security Alerts:**
+   - Select alert type (compromised key, suspicious activity, etc.)
+   - Click "Send Security Alert"
+   - Everyone in room will receive the alert
+
+#### **Complete Test Flow:**
+```
+1. Connect to server
+2. Create room (Alice)
+3. Join with another client (Bob)
+4. Alice: Send public key (broadcast)
+5. Bob: Send public key (broadcast)
+6. Alice: Share room key with Bob
+7. Both: Send encrypted messages
+8. Test security alerts
+9. Verify room status
+10. Test typing indicators
+```
+
+### Run Tests
 });
 ```
 
