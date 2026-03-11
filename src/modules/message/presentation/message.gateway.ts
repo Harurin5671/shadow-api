@@ -198,23 +198,24 @@ export class MessageGateway {
       const participant = room?.participants.find(p => p.id === client.id);
       if (participant && dto.publicKey) {
         participant.publicKey = dto.publicKey;
-        await this.roomRepository.save(room!);
+        await this.roomRepository.savePreservingTTL(room!);
         console.log(`💾 [MessageGateway] publicKey guardada para ${client.id} en sala ${dto.roomCode}`);
       }
 
       // Broadcast a todos en la sala (incluyendo nuevos participantes)
       const roomCode = dto.roomCode;
+      
+      // Formato compatible con iOS: {roomCode, publicKey, participantAlias}
       const keyExchangeData = {
-        fromSocketId: client.id,
-        fromAlias: dto.participantAlias || 'Unknown',
+        roomCode: roomCode,
         publicKey: dto.publicKey,
-        timestamp: Date.now()
+        participantAlias: dto.participantAlias || 'Unknown'
       };
 
-      console.log(`📡 [MessageGateway] Preparando envío de clave pública:`, {
-        fromSocketId: keyExchangeData.fromSocketId,
-        fromAlias: keyExchangeData.fromAlias,
-        roomCode: roomCode,
+      console.log(`📡 [MessageGateway] Preparando envío de clave pública (formato iOS):`, {
+        roomCode: keyExchangeData.roomCode,
+        participantAlias: keyExchangeData.participantAlias,
+        publicKeyLength: keyExchangeData.publicKey?.length || 0,
         isBroadcast: !dto.targetSocketId
       });
 

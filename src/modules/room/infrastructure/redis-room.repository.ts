@@ -24,7 +24,23 @@ export class RedisRoomRepository implements RoomRepository {
   async savePreservingTTL(room: Room): Promise<void> {
     const key = ROOM_KEY(room.code);
     const currentTTL = await this.redis.getTTL(key);
+    
+    console.log(`🔍 [RedisRepository] savePreservingTTL para sala ${room.code}:`, {
+      currentTTL: currentTTL,
+      roomTTL: ROOM_TTL,
+      willPreserve: currentTTL > 0,
+      participantCount: room.participantCount
+    });
+    
     await this.redis.set(key, room.toJSON(), currentTTL > 0 ? currentTTL : ROOM_TTL);
+    
+    // Verificar que se aplicó correctamente
+    const newTTL = await this.redis.getTTL(key);
+    console.log(`📊 [RedisRepository] TTL después de guardar:`, {
+      newTTL: newTTL,
+      preserved: newTTL === currentTTL,
+      difference: newTTL - currentTTL
+    });
   }
 
   async getTTL(code: string): Promise<number> {
